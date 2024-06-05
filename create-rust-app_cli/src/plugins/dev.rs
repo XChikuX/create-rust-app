@@ -1,10 +1,12 @@
-use crate::utils::fs;
-use crate::utils::logger::add_file_msg;
+use crate::logger::register_service_msg;
 use crate::plugins::InstallConfig;
 use crate::plugins::Plugin;
-use anyhow::Result;
-use rust_embed::RustEmbed;
+use crate::utils::fs;
+use crate::utils::logger::add_file_msg;
 use crate::BackendFramework;
+use anyhow::Result;
+use indoc::indoc;
+use rust_embed::RustEmbed;
 
 pub struct Dev {}
 
@@ -19,7 +21,9 @@ impl Plugin for Dev {
 
     fn install(&self, install_config: InstallConfig) -> Result<()> {
         for filename in Asset::iter() {
-            if filename.starts_with("README.md") || filename.contains(".cargo/admin") && !filename.contains(".cargo/admin/dist") {
+            if filename.starts_with("README.md")
+                || filename.contains(".cargo/admin") && !filename.contains(".cargo/admin/dist")
+            {
                 continue;
             }
 
@@ -31,7 +35,7 @@ impl Plugin for Dev {
 
             add_file_msg(filename.as_ref());
             std::fs::create_dir_all(directory_path)?;
-            std::fs::write(file_path, file_contents)?;
+            std::fs::write(file_path, file_contents.data)?;
         }
 
         // TODO: Fix these appends/prepends by prepending the filepath with project_dir
@@ -45,43 +49,43 @@ impl Plugin for Dev {
     "react-query": "^3.21.0""#,
         )?;
 
-        fs::replace(
-            "frontend/src/App.tsx",
-            "const App = () => {",
-            r#"if (process.env.NODE_ENV === 'development') import('./setupDevelopment')
-    
-const App = () => {"#,
+        fs::append(
+            "frontend/src/dev.tsx",
+            indoc! {r#"// Sets up the development environment.
+//
+// Note: When running `cargo frontend` and `cargo backend` individually, "DEV_SERVER_PORT" is not set.
+//       Use `cargo fullstack` for the full development experience.
+if (import.meta.env.DEV_SERVER_PORT) {
+    import('./setupDevelopment')
+}
+"#},
         )?;
 
         match install_config.backend_framework {
             BackendFramework::ActixWeb => {
-                fs::replace("backend/main.rs",
-                            r#"/* Development-only routes */"#,
-                            r#"/* Development-only routes */
+                register_service_msg("(dev-only) /development");
+                register_service_msg("(dev-only) /admin");
+                fs::replace(
+                    "backend/main.rs",
+                    r"/* Development-only routes */",
+                    r#"/* Development-only routes */
             // Mount development-only API routes
             api_scope = api_scope.service(create_rust_app::dev::endpoints(web::scope("/development")));
             // Mount the admin dashboard on /admin
-            app = app.service(web::scope("/admin").service(Files::new("/", ".cargo/admin/dist/").index_file("admin.html")));"#)?;
-
-            },
+            app = app.service(web::scope("/admin").service(Files::new("/", ".cargo/admin/dist/").index_file("admin.html")));"#,
+                )?;
+            }
             BackendFramework::Poem => {
+                register_service_msg("(dev-only) /development");
+                register_service_msg("(dev-only) /admin");
                 fs::replace(
                     "backend/main.rs",
-                    "let mut app = Route::new().nest(\"/api\", api);",
-                    r#"#[cfg(debug_assertions)]
-        {
-            api = api.nest("/development", create_rust_app::dev::api());
-        }
-
-        let mut app = Route::new().nest("/api", api);
-
-        #[cfg(debug_assertions)]
-        {
-            app = app.at(
-                "*",
-                StaticFilesEndpoint::new(".cargo/admin/dist").index_file("admin.html"),
-            );
-        }"#
+                    r"/* Development-only routes */",
+                    r#"/* Development-only routes */
+        // Mount development-only API routes
+        api_routes = api_routes.nest("/development", create_rust_app::dev::api());
+        // Mount the admin dashboard on /admin
+        app = app.at("/admin", StaticFilesEndpoint::new(".cargo/admin/dist").index_file("admin.html"));"#,
                 )?;
             }
         }

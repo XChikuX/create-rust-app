@@ -1,9 +1,9 @@
+use crate::logger::register_service_msg;
+use crate::BackendFramework;
 use anyhow::Result;
 use indoc::indoc;
 use inflector::Inflector;
 use std::path::PathBuf;
-use crate::BackendFramework;
-use crate::logger::register_service_msg;
 
 struct Service {
     pub config: ServiceConfig,
@@ -15,10 +15,16 @@ struct ServiceConfig {
     pub file_name: String,
 }
 
-pub fn create(backend: BackendFramework, resource_name: &str, service_api_fn: &str, base_endpoint_path: &str) -> Result<()> {
+pub fn create(
+    backend: BackendFramework,
+    resource_name: &str,
+    service_api_fn: &str,
+    base_endpoint_path: &str,
+    include_qsync_attr: bool,
+) -> Result<()> {
     let resource = match backend {
-        BackendFramework::ActixWeb => generate_actix(resource_name),
-        BackendFramework::Poem => generate_poem(resource_name)
+        BackendFramework::ActixWeb => generate_actix(resource_name, include_qsync_attr),
+        BackendFramework::Poem => generate_poem(resource_name),
     };
 
     crate::fs::add_rust_file(
@@ -30,10 +36,15 @@ pub fn create(backend: BackendFramework, resource_name: &str, service_api_fn: &s
     match backend {
         BackendFramework::ActixWeb => {
             let name = resource.config.file_name.as_str();
-            let service_entry = &format!("services::{}::endpoints(web::scope(\"{}\"))", name, base_endpoint_path);
+            let service_entry =
+                &format!("services::{name}::endpoints(web::scope(\"{base_endpoint_path}\"))");
             register_actix(name, service_entry)?;
-        },
-        BackendFramework::Poem => register_poem(&resource.config.file_name, service_api_fn, base_endpoint_path)?
+        }
+        BackendFramework::Poem => register_poem(
+            &resource.config.file_name,
+            service_api_fn,
+            base_endpoint_path,
+        )?,
     };
 
     Ok(())
@@ -43,10 +54,10 @@ fn config(service_name: &str) -> ServiceConfig {
     let model_name = service_name.to_pascal_case();
     let file_name = model_name.to_snake_case();
 
-    return ServiceConfig {
+    ServiceConfig {
         model_name,
         file_name,
-    };
+    }
 }
 
 fn generate_poem(service_name: &str) -> Service {
@@ -140,114 +151,200 @@ fn generate_poem(service_name: &str) -> Service {
     }
 }
 
-fn generate_actix(service_name: &str) -> Service {
+#[allow(clippy::too_many_lines)]
+fn generate_actix(service_name: &str, include_qsync_attr: bool) -> Service {
     let config = config(service_name);
-    let contents_template: &str = indoc! {"\
-    use crate::models::$FILE_NAME::{$MODEL_NAME, $MODEL_NAMEChangeset};
-    use crate::models::{ID, PaginationParams};
-    use crate::Pool;
+    let contents_template: &str = indoc! {r#"
+    use actix_web::{delete, get, post, put};
+    use actix_web::{
+        HttpResponse,
+        web::{Data, Json, Path, Query},
+    };
+    use create_rust_app::Database;
+    use diesel::OptionalExtension;
+    use qsync::qsync;
+    use serde::Deserialize;
+    use tsync::tsync;
+
+    use crate::models::$TABLE_NAME::{$MODEL_NAME, Create$MODEL_NAME, Update$MODEL_NAME};
     
-    use actix_web::{delete, get, post, put, Error as AWError};
-    use actix_web::{web, HttpResponse};
-    
-    #[get(\"\")]
-    async fn index(
-      pool: web::Data<Pool>,
-      web::Query(info): web::Query<PaginationParams>
-    ) -> Result<HttpResponse, AWError> {
-      let db = pool.get().unwrap();
-    
-      Ok($MODEL_NAME::read_all(&db, &info)
-        .map(|items| HttpResponse::Ok().json(items))
-        .map_err(|_| HttpResponse::InternalServerError())?)
+    #[tsync]
+    #[derive(Deserialize)]
+    struct List$MODEL_NAMERequest {
+        page: i64,
+        page_size: i64,
     }
     
-    #[get(\"/{id}\")]
+    $LIST_QSYNC_ATTR#[get("")]
+    async fn list(
+      db: Data<Database>,
+      info: Query<List$MODEL_NAMERequest>
+    ) -> HttpResponse {
+      let mut db = db.pool.get().unwrap();
+    
+      let results = $MODEL_NAME::paginate(&mut db, info.page, info.page_size);
+
+      match results {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+      }
+    }
+    
+    $READ_QSYNC_ATTR#[get("/{id}")]
     async fn read(
-      pool: web::Data<Pool>,
-      web::Path(item_id): web::Path<ID>
-    ) -> Result<HttpResponse, AWError> {
-      let db = pool.get().unwrap();
-    
-      Ok($MODEL_NAME::read(&db, item_id)
-        .map(|item| HttpResponse::Found().json(item))
-        .map_err(|_| HttpResponse::NotFound())?)
+      db: Data<Database>,
+      item_id: Path<i32>
+    ) -> HttpResponse {
+        let mut db = db.pool.get().unwrap();
+
+        let result = $MODEL_NAME::read(&mut db, item_id.into_inner()).optional();
+
+        match result {
+            Ok(result) => match result {
+                Some(item) => HttpResponse::Ok().json(item),
+                None => HttpResponse::NotFound().finish(),
+            },
+            Err(_) => HttpResponse::InternalServerError().finish(),
+        }
     }
     
-    #[post(\"\")]
+    $CREATE_QSYNC_ATTR#[post("")]
     async fn create(
-      pool: web::Data<Pool>,
-      web::Json(item): web::Json<$MODEL_NAMEChangeset>
-    ) -> Result<HttpResponse, AWError> {
-      let db = pool.get().unwrap();
+      db: Data<Database>,
+      item: Json<Create$MODEL_NAME>
+    ) -> HttpResponse {
+        let mut db = db.pool.get().unwrap();
+
+        let result = $MODEL_NAME::create(&mut db, &item);
     
-      Ok($MODEL_NAME::create(&db, &item)
-        .map(|item| HttpResponse::Created().json(item))
-        .map_err(|_| HttpResponse::InternalServerError())?)
+        match result {
+            Ok(result) => HttpResponse::Ok().json(result),
+            Err(_) => HttpResponse::InternalServerError().finish()
+        }
     }
     
-    #[put(\"/{id}\")]
+    $UPDATE_QSYNC_ATTR#[put("/{id}")]
     async fn update(
-      pool: web::Data<Pool>,
-      web::Path(item_id): web::Path<ID>,
-      web::Json(item): web::Json<$MODEL_NAMEChangeset>
-    ) -> Result<HttpResponse, AWError> {
-      let db = pool.get().unwrap();
+      db: Data<Database>,
+      item_id: Path<i32>,
+      item: Json<Update$MODEL_NAME>
+    ) -> HttpResponse {
+        let mut db = db.pool.get().unwrap();
+
+        let result = $MODEL_NAME::update(&mut db, item_id.into_inner(), &item);
     
-      Ok($MODEL_NAME::update(&db, item_id, &item)
-        .map(|item| HttpResponse::Ok().json(item))
-        .map_err(|_| HttpResponse::InternalServerError())?)
+        match result {
+            Ok(result) => HttpResponse::Ok().json(result),
+            Err(_) => HttpResponse::InternalServerError().finish()
+        }
     }
     
-    #[delete(\"/{id}\")]
-    async fn destroy(
-        pool: web::Data<Pool>,
-        web::Path(item_id): web::Path<ID>,
-    ) -> Result<HttpResponse, AWError> {
-        let db = pool.get().unwrap();
+    $DESTROY_QSYNC_ATTR#[delete("/{id}")]
+    async fn destroy(db: Data<Database>, item_id: Path<i32>) -> HttpResponse {
+        let mut db = db.pool.get().unwrap();
     
-        Ok($MODEL_NAME::delete(&db, item_id)
-            .map(|_| HttpResponse::Ok().finish())
-            .map_err(|_| HttpResponse::InternalServerError().finish())?)
+        let result = $MODEL_NAME::delete(&mut db, item_id.into_inner());
+    
+        match result {
+            Ok(result) => match result {
+                0 => HttpResponse::NotFound().finish(),
+                usize => HttpResponse::Ok().json(usize)
+            },
+            Err(_) => HttpResponse::InternalServerError().finish()
+        }
     }
-    
     
     pub fn endpoints(scope: actix_web::Scope) -> actix_web::Scope {
       return scope
-        .service(index)
+        .service(list)
         .service(read)
         .service(create)
         .service(update)
         .service(destroy);
     }
-  "};
+  "#};
+
+    let destroy_qsync_attr = "#[qsync(return_type=\"number\")]\n";
+    let update_qsync_attr = "#[qsync(return_type=\"$MODEL_NAME\")]\n";
+    let create_qsync_attr = "#[qsync(return_type=\"$MODEL_NAME\")]\n";
+    let read_qsync_attr = "#[qsync(return_type=\"$MODEL_NAME\")]\n";
+    let list_qsync_attr = "#[qsync(return_type=\"PaginationResult<$MODEL_NAME>\")]\n";
 
     let contents = String::from(contents_template)
+        .replace(
+            "$DESTROY_QSYNC_ATTR",
+            if include_qsync_attr {
+                destroy_qsync_attr
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "$UPDATE_QSYNC_ATTR",
+            if include_qsync_attr {
+                update_qsync_attr
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "$CREATE_QSYNC_ATTR",
+            if include_qsync_attr {
+                create_qsync_attr
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "$READ_QSYNC_ATTR",
+            if include_qsync_attr {
+                read_qsync_attr
+            } else {
+                ""
+            },
+        )
+        .replace(
+            "$LIST_QSYNC_ATTR",
+            if include_qsync_attr {
+                list_qsync_attr
+            } else {
+                ""
+            },
+        )
         .replace("$MODEL_NAME", config.model_name.as_str())
-        .replace("$FILE_NAME", config.file_name.as_str());
+        .replace("$TABLE_NAME", config.file_name.to_plural().as_str());
 
     Service {
         config,
-        file_contents: contents,
+        file_contents: format!("{}\n", contents.trim()),
     }
 }
 
-/// use fs::replace instead and also fs::append for the services/mod.rs entry
+/// use `fs::replace` instead and also `fs::append` for the services/mod.rs entry
 // #[deprecated]
-pub fn register_poem(name: &str, service_api_fn: &str, service_base_endpoint_path: &str) -> Result<()> {
+pub fn register_poem(
+    name: &str,
+    service_api_fn: &str,
+    service_base_endpoint_path: &str,
+) -> Result<()> {
     register_service_msg(name);
     let main_file_path = PathBuf::from("backend/main.rs");
     if main_file_path.exists() && main_file_path.is_file() {
         let mut main_file_contents = std::fs::read_to_string(&main_file_path)?;
 
-        main_file_contents = main_file_contents.replace("let mut api = Route::new()", &format!("let mut api = Route::new()\n\t\t.nest(\"{}\", {})", service_base_endpoint_path, service_api_fn));
+        main_file_contents = main_file_contents.replace(
+            "let mut api_routes = Route::new();",
+            &format!(
+                "let mut api_routes = Route::new();\n\t\tapi_routes = api_routes.nest(\"{service_base_endpoint_path}\", {service_api_fn});",
+            ),
+        );
         std::fs::write(main_file_path, main_file_contents)?;
     }
 
     Ok(())
 }
 
-/// use fs::replace instead and also fs::append for the services/mod.rs entry
+/// use `fs::replace` instead and also `fs::append` for the services/mod.rs entry
 // #[deprecated]
 pub fn register_actix(name: &str, service: &str) -> Result<()> {
     register_service_msg(name);
@@ -256,8 +353,10 @@ pub fn register_actix(name: &str, service: &str) -> Result<()> {
         let mut main_file_contents = std::fs::read_to_string(&main_file_path)?;
         main_file_contents = main_file_contents.replace(
             r#"let mut api_scope = web::scope("/api");"#,
-            &format!(r#"let mut api_scope = web::scope("/api");
-        api_scope = api_scope.service({});"#, service)
+            &format!(
+                r#"let mut api_scope = web::scope("/api");
+        api_scope = api_scope.service({service});"#
+            ),
         );
         std::fs::write(main_file_path, main_file_contents)?;
     }

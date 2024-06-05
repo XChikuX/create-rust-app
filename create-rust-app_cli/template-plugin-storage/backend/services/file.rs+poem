@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use create_rust_app::{Attachment, AttachmentBlob, AttachmentData, Database, Storage};
-use poem::{get, handler, http::StatusCode, IntoResponse, Response, Result, Route, web::{Data, Json, Multipart, Path, Query}};
+use poem::{get, handler, http::StatusCode, IntoResponse, Response, Result, Route, web::{Data, Json, Multipart, Path}};
 use serde::Serialize;
-
-// use futures_util::StreamExt as _;
 
 #[derive(Serialize)]
 #[tsync::tsync]
@@ -17,15 +15,15 @@ struct FileInfo {
 
 #[handler]
 async fn all(db: Data<&Database>, storage: Data<&Storage>) -> Result<impl IntoResponse> {
-    let db = db.pool.get().unwrap();
-    let files = Attachment::find_all_for_record(&db, "file".to_string(), "NULL".to_string(), 0).unwrap_or_default();
+    let mut db = db.pool.get().unwrap();
+    let files = Attachment::find_all_for_record(&mut db, "file".to_string(), "NULL".to_string(), 0).unwrap_or_default();
     let blob_ids = files.iter().map(|f| f.blob_id).collect::<Vec<_>>();
-    let blobs = AttachmentBlob::find_all_by_id(&db, blob_ids).unwrap_or_default();
+    let blobs = AttachmentBlob::find_all_by_id(&mut db, blob_ids).unwrap_or_default();
 
     let mut files = blobs.iter().enumerate().map(|b| FileInfo {
         id: files[b.0].id,
         key: b.1.clone().key,
-        name: b.1.clone().file_name.unwrap_or("".to_string()),
+        name: b.1.clone().file_name,
         url: None,
     }).collect::<Vec<FileInfo>>();
 

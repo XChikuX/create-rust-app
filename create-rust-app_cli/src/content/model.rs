@@ -2,17 +2,20 @@ use crate::inflector::Inflector;
 use anyhow::Result;
 use indoc::indoc;
 
+#[allow(clippy::module_name_repetitions)]
 pub struct Model {
     pub config: ModelConfig,
     pub file_contents: String,
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct ModelConfig {
     pub model_name: String,
     pub table_name: String,
     pub file_name: String,
 }
 
+#[allow(dead_code)]
 pub fn create(resource_name: &str) -> Result<Model> {
     let resource = generate(resource_name);
 
@@ -25,18 +28,20 @@ pub fn create(resource_name: &str) -> Result<Model> {
     Ok(resource)
 }
 
+#[allow(dead_code)]
 fn config(resource_name: &str) -> ModelConfig {
     let model_name = resource_name.to_pascal_case();
     let file_name = model_name.to_snake_case();
     let table_name = model_name.to_table_case();
 
-    return ModelConfig {
-        model_name: model_name,
-        file_name: file_name,
-        table_name: table_name,
-    };
+    ModelConfig {
+        model_name,
+        table_name,
+        file_name,
+    }
 }
 
+#[allow(dead_code)]
 fn generate(resource_name: &str) -> Model {
     let config = config(resource_name);
 
@@ -50,8 +55,8 @@ fn generate(resource_name: &str) -> Model {
         use crate::DB;
         
         #[tsync::tsync]
-        #[derive(Debug, Serialize, Deserialize, Clone, Queryable, Insertable, Identifiable, Associations, AsChangeset)]
-        #[table_name = \"$TABLE_NAME\"]
+        #[derive(Debug, Serialize, Deserialize, Clone, Queryable, Insertable, Identifiable, AsChangeset)]
+        #[diesel(table_name=$TABLE_NAME)]
         pub struct $MODEL_NAME {
           /* -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
              Add columns here in the same order as the schema
@@ -64,7 +69,7 @@ fn generate(resource_name: &str) -> Model {
         
         #[tsync::tsync]
         #[derive(Debug, Serialize, Deserialize, Clone, Insertable, AsChangeset)]
-        #[table_name = \"$TABLE_NAME\"]
+        #[diesel(table_name=$TABLE_NAME)]
         pub struct $MODEL_NAMEChangeset {
           /* -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
              Don't include non-mutable columns
@@ -118,7 +123,7 @@ fn generate(resource_name: &str) -> Model {
         .replace("$TABLE_NAME", config.table_name.as_str());
 
     Model {
-        config: config,
+        config,
         file_contents: contents,
     }
 }

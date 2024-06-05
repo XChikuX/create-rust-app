@@ -1,23 +1,32 @@
-pub mod dev;
 pub mod auth;
+pub mod auth_oidc;
 pub mod container;
-pub mod storage;
+pub mod dev;
 pub mod graphql;
+pub mod storage;
+pub mod tasks;
+pub mod utoipa;
 
-use crate::utils::logger;
+use crate::{project, BackendFramework};
+use crate::{utils::logger, BackendDatabase};
 use anyhow::Result;
 use std::path::PathBuf;
-use crate::{BackendFramework, project};
 
 #[derive(Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct InstallConfig {
+    pub project_name: String,
     pub project_dir: PathBuf,
     pub backend_framework: BackendFramework,
+    pub backend_database: BackendDatabase,
     pub plugin_dev: bool,
     pub plugin_auth: bool,
+    pub plugin_auth_oidc: bool,
     pub plugin_container: bool,
     pub plugin_storage: bool,
-    pub plugin_graphql: bool
+    pub plugin_tasks: bool,
+    pub plugin_graphql: bool,
+    pub plugin_utoipa: bool,
 }
 
 pub trait Plugin {
@@ -34,7 +43,7 @@ pub trait Plugin {
 
         let output = std::str::from_utf8(&output.stdout).unwrap();
 
-        if output.len() > 0 {
+        if !output.is_empty() {
             logger::error(
                 "Please stash and remove any changes (staged, unstaged, and untracked files)",
             );
@@ -48,7 +57,35 @@ pub trait Plugin {
 
     fn after_install(&self, install_config: InstallConfig) -> Result<()> {
         // cleanup
-        project::remove_non_framework_files(&install_config.project_dir, install_config.backend_framework)?;
+        project::remove_non_framework_files(
+            &install_config.project_dir,
+            install_config.backend_framework,
+        )?;
+
+        /*
+
+        // TODO: uncomment this after we refactor and add a method to the plugin trait
+        //       which adds plugin-specific binaries to Cargo.toml. Otherwise, we get errors
+        //       like this when running `cargo fmt`:
+        //
+        //       Error: file `/home/h/w/temp/testoidc2/backend/async_queue.rs` does not exist
+        //       Error: file `/home/h/w/temp/testoidc/.cargo/bin/queue.rs` does not exist
+        //
+        logger::command_msg("cargo fmt");
+
+        let cargo_fmt = std::process::Command::new("cargo")
+            .current_dir(".")
+            .arg("fmt")
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("failed to execute process");
+
+        if !cargo_fmt.success() {
+            logger::error("Failed to execute `cargo fmt`");
+            std::process::exit(1);
+        }
+
+        */
 
         logger::command_msg("git add -A");
 
@@ -85,12 +122,13 @@ pub trait Plugin {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // we allow pass_by_value because most of these are zero-sized types, and therefore smaller than references
 pub fn install(plugin: impl Plugin, install_config: InstallConfig) -> Result<()> {
     logger::plugin_msg(plugin.name());
 
     plugin.before_install()?;
     plugin.install(install_config.clone())?;
-    plugin.after_install(install_config.clone())?;
+    plugin.after_install(install_config)?;
 
     Ok(())
 }

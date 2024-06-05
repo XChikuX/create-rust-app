@@ -1,14 +1,14 @@
-#[macro_use]
 extern crate diesel;
+
+use create_rust_app::AppConfig;
 
 use poem::endpoint::{StaticFilesEndpoint};
 use poem::{
     listener::TcpListener,
-    middleware::{AddData, CookieJarManager},
+    middleware::{AddData, CookieJarManager, Tracing},
     EndpointExt, Route, Server,
 };
 
-mod extractors;
 mod mail;
 mod models;
 mod schema;
@@ -16,29 +16,34 @@ mod services;
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
+    #[cfg(debug_assertions)] create_rust_app::setup_development().await;
     tracing_subscriber::fmt::init();
 
     let data = create_rust_app::setup();
+    simple_logger::init_with_env().unwrap();
 
-    let mut api = Route::new()
-        .nest("/todos", services::todo::api());
+    let mut api_routes = Route::new();
+    api_routes = api_routes.nest("/todos", services::todo::api());
 
-    let mut app = Route::new().nest("/api", api);
+    let mut app = Route::new();
 
-    #[cfg(not(debug_assertions))]
+    #[cfg(debug_assertions)]
     {
-        app = app.at(
-            "*",
-            StaticFilesEndpoint::new("./frontend/build").index_file("index.html"),
-        );
+        /* Development-only routes */
     }
 
-    Server::new(TcpListener::bind("0.0.0.0:8080"))
+    app = app.nest("/api", api_routes);
+    app = app.at("*", poem::get(create_rust_app::render_views));
+
+    Server::new(TcpListener::bind("0.0.0.0:3000"))
         .run(
             app.with(AddData::new(data.mailer))
                 .with(AddData::new(data.database))
-                .with(create_rust_app::PoemLogger)
+                .with(AddData::new(AppConfig {
+                    app_url: std::env::var("APP_URL").unwrap(),
+                 })
                 .with(CookieJarManager::new())
+                .with(Tracing)
                 .catch_error(create_rust_app::not_found),
         )
         .await

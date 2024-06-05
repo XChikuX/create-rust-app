@@ -1,7 +1,8 @@
+use crate::BackendDatabase;
 use console::style;
 
 pub fn message(msg: &str) {
-    println!("[{}] {}", style("create-rust-app").blue(), msg)
+    println!("[{}] {}", style("create-rust-app").blue(), msg);
 }
 
 pub fn command_msg(command: &str) {
@@ -13,7 +14,10 @@ pub fn add_file_msg(file: &str) {
 }
 
 pub fn register_service_msg(service_name: &str) {
-    message(&format!("Registering service {}", style(service_name).yellow()));
+    message(&format!(
+        "Registering service {}",
+        style(service_name).yellow()
+    ));
 }
 
 pub fn modify_file_msg(file: &str) {
@@ -25,7 +29,11 @@ pub fn remove_file_msg(file: &str) {
 }
 
 pub fn rename_file_msg(src: &str, dest: &str) {
-    message(&format!("Renaming {} to {}", style(src).yellow(), style(dest).yellow()));
+    message(&format!(
+        "Renaming {} to {}",
+        style(src).yellow(),
+        style(dest).yellow()
+    ));
 }
 
 pub fn plugin_msg(name: &str) {
@@ -33,11 +41,16 @@ pub fn plugin_msg(name: &str) {
 }
 
 pub fn error(msg: &str) {
-    message(&format!("{} {}", style("ERROR: ").red(), msg))
+    message(&format!("{} {}", style("ERROR: ").red(), msg));
 }
 
-pub fn exit(msg: &str, err: std::io::Error) -> ! {
-    eprintln!("{}: {:?}", msg, err);
+pub fn exit_code(msg: &str, code: i32) -> ! {
+    error(msg);
+    std::process::exit(code);
+}
+
+pub fn exit_error(msg: &str, err: &std::io::Error) -> ! {
+    error(format!("{msg}: {err:?}").as_str());
     std::process::exit(1);
 }
 
@@ -45,51 +58,36 @@ pub fn add_dependency_msg(name: &str) {
     message(&format!("Adding dependency {}", style(name).yellow()));
 }
 
-pub fn project_created_msg(project_dir: std::path::PathBuf) {
+pub fn project_created_msg(install_config: crate::plugins::InstallConfig) {
+    let project_name = install_config.project_name;
+
     command_msg("cargo watch --help\t# checking cargo-watch installation");
 
-    let is_cargo_watch_installed = match std::process::Command::new("cargo")
+    let is_cargo_watch_installed = std::process::Command::new("cargo")
         .arg("watch")
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-    {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    };
+        .map_or(false, |status| status.success());
 
     command_msg("diesel --help\t# checking diesel_cli installation");
 
-    let is_diesel_cli_installed = match std::process::Command::new("diesel")
+    let is_diesel_cli_installed = std::process::Command::new("diesel")
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-    {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    };
-
-    command_msg("tsync --help\t\t# checking tsync installation");
-
-    let is_tsync_cli_installed = match std::process::Command::new("tsync")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-    {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    };
+        .map_or(false, |status| status.success());
 
     message(&format!(
         "{}",
         style("Congratulations, your project is ready!").underlined()
     ));
 
+    // TODO: update dev server to watch rust and frontend files and execute tsync/dsync calls accordingly
     if !is_cargo_watch_installed {
-        message(&format!("• Install cargo-watch (for development)"));
+        message("• Install cargo-watch (for development)");
         message(&format!(
             "  $ {}",
             style("cargo install cargo-watch").cyan()
@@ -97,34 +95,28 @@ pub fn project_created_msg(project_dir: std::path::PathBuf) {
     }
 
     if !is_diesel_cli_installed {
-        message(&format!("• Install diesel (to manage the database)"));
+        message("• Install diesel (to manage the database)");
         message(&format!(
-            "  $ {}",
-            style("cargo install diesel_cli --no-default-features --features \"postgres\"").cyan()
+            "  $ {} \"{}\"",
+            style("cargo install diesel_cli --no-default-features --features").cyan(),
+            match install_config.backend_database {
+                BackendDatabase::Postgres => "postgres",
+                BackendDatabase::Sqlite => "sqlite-bundled",
+            }
         ));
     }
 
-    if !is_tsync_cli_installed {
-        message(&format!("• Install tsync (to generate typescript types from rust)"));
-        message(&format!(
-            "  $ {}",
-            style("cargo install tsync").cyan()
-        ));
-    }
-
-    message(&format!("• Begin development!"));
-    message(&format!("  1. Change to your project directory"));
+    message("• Begin development!");
+    message("  1. Change to your project directory");
     message(&format!(
         "     $ {}",
-        style(format!("cd {:#?}", project_dir).to_string()).cyan()
+        style(format!("cd {project_name:#?}")).cyan()
     ));
-    message(&format!("  2. Open `.env` and set the DATABASE_URL"));
+    message("  2. Open `.env` and set the DATABASE_URL");
     message(&format!("     $ {}", style("vim .env").cyan()));
-    message(&format!("  3. Setup your database:"));
+    message("  3. Setup your database:");
     message(&format!("     $ {}", style("diesel database reset").cyan()));
-    message(&format!(
-        "  4. Develop! Run the following for continuous compilation:"
-    ));
+    message("  4. Develop! Run the following for continuous compilation:");
     message(&format!("     $ {}", style("cargo fullstack").cyan()));
-    message(&format!("• Enjoy!"));
+    message("• Enjoy!");
 }

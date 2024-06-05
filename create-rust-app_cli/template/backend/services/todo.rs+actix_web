@@ -1,49 +1,22 @@
-use crate::diesel::*;
-use crate::schema::*;
+use actix_web::{delete, Error, get, HttpResponse, post, put, Result, web::{Data, Json, Path, Query}};
 use create_rust_app::Database;
-
-use chrono::{DateTime, Utc};
-use actix_web::{Result, web::{Path, Json, Data, Query}, HttpResponse, delete, get, post, put, Error, Responder};
-use serde::{Deserialize, Serialize};
+use crate::models::todos::{CreateTodo, Todo, UpdateTodo};
 
 #[tsync::tsync]
-#[derive(Debug, Serialize, Deserialize, Identifiable, AsChangeset, Clone, Queryable)]
-#[table_name = "todos"]
-pub struct Todo {
-    pub id: i32,
-    pub text: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[tsync::tsync]
-#[derive(Debug, Insertable, Serialize, Deserialize, AsChangeset)]
-#[table_name = "todos"]
-pub struct TodoJson {
-    pub text: String,
-}
-
-const MAX_PAGE_SIZE: u16 = 100;
-
-#[derive(Deserialize)]
-pub struct IndexRequest {
-    page: i64,
-    page_size: i64,
+#[derive(serde::Deserialize)]
+pub struct PaginationParams {
+    pub page: i64,
+    pub page_size: i64,
 }
 
 #[get("")]
 async fn index(
     db: Data<Database>,
-    Query(info): Query<IndexRequest>,
+    Query(info): Query<PaginationParams>,
 ) -> HttpResponse {
-    let db = db.pool.get().unwrap();
+    let mut con = db.get_connection().unwrap();
 
-    use crate::schema::todos::dsl::*;
-    let result = todos
-        .order(created_at)
-        .limit(10)
-        .offset(info.page * std::cmp::max(info.page_size, MAX_PAGE_SIZE as i64))
-        .load::<Todo>(&db);
+    let result = Todo::paginate(&mut con, info.page, info.page_size);
 
     if result.is_ok() {
         HttpResponse::Ok().json(result.unwrap())
@@ -57,13 +30,14 @@ async fn read(
     db: Data<Database>,
     item_id: Path<i32>,
 ) -> HttpResponse {
-    let db = db.pool.get().unwrap();
+    let mut con = db.get_connection().unwrap();
 
-    use crate::schema::todos::dsl::*;
-    let result = todos.filter(id.eq(item_id.into_inner())).first::<Todo>(&db);
+    let result = Todo::read(&mut con, item_id.into_inner());
 
     if result.is_ok() {
-        HttpResponse::Ok().json(result.unwrap())
+        let todo = result.unwrap();
+
+        HttpResponse::Ok().json(todo)
     } else {
         HttpResponse::NotFound().finish()
     }
@@ -72,16 +46,11 @@ async fn read(
 #[post("")]
 async fn create(
     db: Data<Database>,
-    Json(item): Json<TodoJson>,
+    Json(item): Json<CreateTodo>,
 ) -> Result<HttpResponse, Error> {
-    let db = db.pool.get().unwrap();
+    let mut con = db.get_connection().unwrap();
 
-    use crate::schema::todos::dsl::*;
-
-    let result: Todo = insert_into(todos)
-        .values(&item)
-        .get_result::<Todo>(&db)
-        .expect("Creation error");
+    let result = Todo::create(&mut con, &item).expect("Creation error");
 
     Ok(HttpResponse::Created().json(result))
 }
@@ -90,17 +59,11 @@ async fn create(
 async fn update(
     db: Data<Database>,
     item_id: Path<i32>,
-    Json(item): Json<TodoJson>,
+    Json(item): Json<UpdateTodo>,
 ) -> HttpResponse {
-    let db = db.pool.get().unwrap();
+    let mut con = db.get_connection().unwrap();
 
-    use crate::schema::todos::dsl::*;
-
-    let result = diesel::update(todos.filter(id.eq(item_id.into_inner())))
-        .set(&TodoJson {
-            ..item
-        })
-        .execute(&db);
+    let result = Todo::update(&mut con, item_id.into_inner(), &item);
 
     if result.is_ok() {
         HttpResponse::Ok().finish()
@@ -114,11 +77,9 @@ async fn destroy(
     db: Data<Database>,
     item_id: Path<i32>,
 ) -> HttpResponse {
-    let db = db.pool.get().unwrap();
+    let mut con = db.get_connection().unwrap();
 
-    use crate::schema::todos::dsl::*;
-
-    let result = diesel::delete(todos.filter(id.eq(item_id.into_inner()))).execute(&db);
+    let result = Todo::delete(&mut con, item_id.into_inner());
 
     if result.is_ok() {
         HttpResponse::Ok().finish()

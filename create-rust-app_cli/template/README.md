@@ -4,16 +4,17 @@ This project was bootstrapped with [Create Rust App](https://github.com/wulf/cre
 
 ## Requirements
 
-- rustup, (Archlinux: `pacman -S rustup`)
-- Rust stable, (bash: `rustup toolchain install stable`)
-- Diesel CLI (after rust is installed: `cargo install diesel_cli`)
+- [stable Rust](https://www.rust-lang.org/tools/install)
+- Diesel CLI 
+  - if using postgres, `cargo install diesel_cli --no-default-features --features postgres`
+  - if using sqlite, `cargo install diesel_cli --no-default-features --features sqlite-bundled`
+- cargo-watch to recompile on change:
+  - `cargo install cargo-watch` (allows running `cargo watch -x run -i frontend/` for continuous compilation; see "available scripts")
 
-- Other helpful tools
+## Notes
 
-  - `cargo install cargo-edit` (makes it easy to add deps with `cargo add`)
-  - `cargo install cargo-watch` (allows running `cargo watch -x run -i frontend/` for continuous compilation)
-
-- `.env` file (use `.env.example` for reference)
+- In development, the `.env` file is read (use `.env.example` for reference)
+- In production, environment variables are sourced directly
 
 ## Available Scripts
 
@@ -21,7 +22,7 @@ In the project directory, you can run:
 
 ### `cargo fullstack`
 
-Runs the app in development mode and watches for changes. Visit [http://localhost:8080](http://localhost:8080) to view it.
+Runs the app in development mode and watches for changes. Visit [http://localhost:3000](http://localhost:3000) to view it.
 
 Any frontend changes should instantly appear. Backend changes will need to recompile.
 Needs `cargo-watch` installed, see requirements.
@@ -43,7 +44,7 @@ Outputs to `frontend/src/types/rust.d.ts`.
 
 ```sh
 # frontend
-cd frontend && yarn && yarn start
+cd frontend && npm && npm start
 ```
 
 ```sh
@@ -59,3 +60,6 @@ cargo watch -x run -i frontend/
 
 - `diesel database setup`
 - `diesel database reset`
+
+# Tips
+* Use the [mold](https://github.com/rui314/mold) linker for slightly faster compilation.

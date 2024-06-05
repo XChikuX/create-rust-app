@@ -1,6 +1,0 @@
-[alias]
-fullstack="run --bin fullstack"
-tsync="run --bin tsync"
-
-[build]
-target-dir=".cargo/.build"
